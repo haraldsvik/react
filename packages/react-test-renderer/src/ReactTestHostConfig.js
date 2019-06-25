@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,10 +7,25 @@
  * @flow
  */
 
-import emptyObject from 'fbjs/lib/emptyObject';
+import warning from 'shared/warning';
 
-import * as TestRendererScheduling from './ReactTestRendererScheduling';
+import type {ReactEventComponentInstance} from 'shared/ReactTypes';
+import {REACT_EVENT_TARGET_TOUCH_HIT} from 'shared/ReactSymbols';
 
+import {enableEventAPI} from 'shared/ReactFeatureFlags';
+
+type EventTargetChildElement = {
+  type: string,
+  props: null | {
+    style?: {
+      position?: string,
+      bottom?: string,
+      left?: string,
+      right?: string,
+      top?: string,
+    },
+  },
+};
 export type Type = string;
 export type Props = Object;
 export type Container = {|
@@ -21,12 +36,14 @@ export type Container = {|
 export type Instance = {|
   type: string,
   props: Object,
+  isHidden: boolean,
   children: Array<Instance | TextInstance>,
   rootContainerInstance: Container,
   tag: 'INSTANCE',
 |};
 export type TextInstance = {|
   text: string,
+  isHidden: boolean,
   tag: 'TEXT',
 |};
 export type HydratableInstance = Instance | TextInstance;
@@ -34,11 +51,22 @@ export type PublicInstance = Instance | TextInstance;
 export type HostContext = Object;
 export type UpdatePayload = Object;
 export type ChildSet = void; // Unused
-
-const UPDATE_SIGNAL = {};
+export type TimeoutHandle = TimeoutID;
+export type NoTimeout = -1;
+export type EventResponder = any;
 
 export * from 'shared/HostConfigWithNoPersistence';
 export * from 'shared/HostConfigWithNoHydration';
+
+const EVENT_COMPONENT_CONTEXT = {};
+const EVENT_TARGET_CONTEXT = {};
+const EVENT_TOUCH_HIT_TARGET_CONTEXT = {};
+const NO_CONTEXT = {};
+const UPDATE_SIGNAL = {};
+if (__DEV__) {
+  Object.freeze(NO_CONTEXT);
+  Object.freeze(UPDATE_SIGNAL);
+}
 
 export function getPublicInstance(inst: Instance | TextInstance): * {
   switch (inst.tag) {
@@ -57,6 +85,15 @@ export function appendChild(
   parentInstance: Instance | Container,
   child: Instance | TextInstance,
 ): void {
+  if (__DEV__) {
+    warning(
+      Array.isArray(parentInstance.children),
+      'An invalid container has been provided. ' +
+        'This may indicate that another renderer is being used in addition to the test renderer. ' +
+        '(For example, ReactDOM.createPortal inside of a ReactTestRenderer tree.) ' +
+        'This is not supported.',
+    );
+  }
   const index = parentInstance.children.indexOf(child);
   if (index !== -1) {
     parentInstance.children.splice(index, 1);
@@ -88,7 +125,7 @@ export function removeChild(
 export function getRootHostContext(
   rootContainerInstance: Container,
 ): HostContext {
-  return emptyObject;
+  return NO_CONTEXT;
 }
 
 export function getChildHostContext(
@@ -96,7 +133,39 @@ export function getChildHostContext(
   type: string,
   rootContainerInstance: Container,
 ): HostContext {
-  return emptyObject;
+  return NO_CONTEXT;
+}
+
+export function getChildHostContextForEventComponent(
+  parentHostContext: HostContext,
+): HostContext {
+  if (__DEV__ && enableEventAPI) {
+    warning(
+      parentHostContext !== EVENT_TARGET_CONTEXT &&
+        parentHostContext !== EVENT_TOUCH_HIT_TARGET_CONTEXT,
+      'validateDOMNesting: React event targets must not have event components as children.',
+    );
+    return EVENT_COMPONENT_CONTEXT;
+  }
+  return NO_CONTEXT;
+}
+
+export function getChildHostContextForEventTarget(
+  parentHostContext: HostContext,
+  type: Symbol | number,
+): HostContext {
+  if (__DEV__ && enableEventAPI) {
+    if (type === REACT_EVENT_TARGET_TOUCH_HIT) {
+      warning(
+        parentHostContext !== EVENT_COMPONENT_CONTEXT,
+        'validateDOMNesting: <TouchHitTarget> cannot not be a direct child of an event component. ' +
+          'Ensure <TouchHitTarget> is a direct child of a DOM element.',
+      );
+      return EVENT_TOUCH_HIT_TARGET_CONTEXT;
+    }
+    return EVENT_TARGET_CONTEXT;
+  }
+  return NO_CONTEXT;
 }
 
 export function prepareForCommit(containerInfo: Container): void {
@@ -117,6 +186,7 @@ export function createInstance(
   return {
     type,
     props,
+    isHidden: false,
     children: [],
     rootContainerInstance,
     tag: 'INSTANCE',
@@ -169,20 +239,33 @@ export function createTextInstance(
   hostContext: Object,
   internalInstanceHandle: Object,
 ): TextInstance {
+  if (__DEV__ && enableEventAPI) {
+    warning(
+      hostContext !== EVENT_COMPONENT_CONTEXT,
+      'validateDOMNesting: React event components cannot have text DOM nodes as children. ' +
+        'Wrap the child text "%s" in an element.',
+      text,
+    );
+    warning(
+      hostContext !== EVENT_TARGET_CONTEXT,
+      'validateDOMNesting: React event targets cannot have text DOM nodes as children. ' +
+        'Wrap the child text "%s" in an element.',
+      text,
+    );
+  }
   return {
     text,
+    isHidden: false,
     tag: 'TEXT',
   };
 }
 
-export const isPrimaryRenderer = true;
-// This approach enables `now` to be mocked by tests,
-// Even after the reconciler has initialized and read host config values.
-export const now = () => TestRendererScheduling.nowImplementation();
-export const scheduleDeferredCallback =
-  TestRendererScheduling.scheduleDeferredCallback;
-export const cancelDeferredCallback =
-  TestRendererScheduling.cancelDeferredCallback;
+export const isPrimaryRenderer = false;
+export const shouldWarnUnactedUpdates = true;
+
+export const scheduleTimeout = setTimeout;
+export const cancelTimeout = clearTimeout;
+export const noTimeout = -1;
 
 // -------------------
 //     Mutation
@@ -226,3 +309,96 @@ export function resetTextContent(testElement: Instance): void {
 export const appendChildToContainer = appendChild;
 export const insertInContainerBefore = insertBefore;
 export const removeChildFromContainer = removeChild;
+
+export function hideInstance(instance: Instance): void {
+  instance.isHidden = true;
+}
+
+export function hideTextInstance(textInstance: TextInstance): void {
+  textInstance.isHidden = true;
+}
+
+export function unhideInstance(instance: Instance, props: Props): void {
+  instance.isHidden = false;
+}
+
+export function unhideTextInstance(
+  textInstance: TextInstance,
+  text: string,
+): void {
+  textInstance.isHidden = false;
+}
+
+export function mountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+): void {
+  // noop
+}
+
+export function updateEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+): void {
+  // noop
+}
+
+export function unmountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+): void {
+  // noop
+}
+
+export function getEventTargetChildElement(
+  type: Symbol | number,
+  props: Props,
+): null | EventTargetChildElement {
+  if (enableEventAPI) {
+    if (type === REACT_EVENT_TARGET_TOUCH_HIT) {
+      const {bottom, left, right, top} = props;
+
+      if (!bottom && !left && !right && !top) {
+        return null;
+      }
+      return {
+        type: 'div',
+        props: {
+          style: {
+            position: 'absolute',
+            zIndex: -1,
+            bottom: bottom ? `-${bottom}px` : '0px',
+            left: left ? `-${left}px` : '0px',
+            right: right ? `-${right}px` : '0px',
+            top: top ? `-${top}px` : '0px',
+          },
+        },
+      };
+    }
+  }
+  return null;
+}
+
+export function handleEventTarget(
+  type: Symbol | number,
+  props: Props,
+  rootContainerInstance: Container,
+  internalInstanceHandle: Object,
+): boolean {
+  if (enableEventAPI) {
+    if (type === REACT_EVENT_TARGET_TOUCH_HIT) {
+      // In DEV we do a computed style check on the position to ensure
+      // the parent host component is correctly position in the document.
+      if (__DEV__) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function commitEventTarget(
+  type: Symbol | number,
+  props: Props,
+  instance: Instance,
+  parentInstance: Instance,
+): void {
+  // noop
+}

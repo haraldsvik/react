@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,19 +11,41 @@
 'use strict';
 
 let React;
+let ReactFeatureFlags;
+let StrictMode;
 let ReactNative;
+let createReactClass;
 let createReactNativeComponentClass;
 let UIManager;
+let NativeMethodsMixin;
+
+const SET_NATIVE_PROPS_DEPRECATION_MESSAGE =
+  'Warning: Calling ref.setNativeProps(nativeProps) ' +
+  'is deprecated and will be removed in a future release. ' +
+  'Use the setNativeProps export from the react-native package instead.' +
+  "\n\timport {setNativeProps} from 'react-native';\n\tsetNativeProps(ref, nativeProps);\n";
 
 describe('ReactNative', () => {
   beforeEach(() => {
     jest.resetModules();
 
     React = require('react');
+    StrictMode = React.StrictMode;
+    ReactFeatureFlags = require('shared/ReactFeatureFlags');
+    ReactFeatureFlags.warnAboutDeprecatedSetNativeProps = true;
     ReactNative = require('react-native-renderer');
-    UIManager = require('UIManager');
-    createReactNativeComponentClass = require('ReactNativeViewConfigRegistry')
-      .register;
+    UIManager = require('react-native/Libraries/ReactPrivate/ReactNativePrivateInterface')
+      .UIManager;
+    createReactClass = require('create-react-class/factory')(
+      React.Component,
+      React.isValidElement,
+      new React.Component().updater,
+    );
+    createReactNativeComponentClass = require('react-native/Libraries/ReactPrivate/ReactNativePrivateInterface')
+      .ReactNativeViewConfigRegistry.register;
+    NativeMethodsMixin =
+      ReactNative.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED
+        .NativeMethodsMixin;
   });
 
   it('should be able to create and render a native component', () => {
@@ -86,7 +108,7 @@ describe('ReactNative', () => {
     expect(UIManager.updateView).toHaveBeenCalledTimes(4);
   });
 
-  it('should not call UIManager.updateView from setNativeProps for properties that have not changed', () => {
+  it('should not call UIManager.updateView from ref.setNativeProps for properties that have not changed', () => {
     const View = createReactNativeComponentClass('RCTView', () => ({
       validAttributes: {foo: true},
       uiViewClassName: 'RCTView',
@@ -98,7 +120,14 @@ describe('ReactNative', () => {
       }
     }
 
-    [View, Subclass].forEach(Component => {
+    const CreateClass = createReactClass({
+      mixins: [NativeMethodsMixin],
+      render: () => {
+        return <View />;
+      },
+    });
+
+    [View, Subclass, CreateClass].forEach(Component => {
       UIManager.updateView.mockReset();
 
       let viewRef;
@@ -113,11 +142,286 @@ describe('ReactNative', () => {
       );
       expect(UIManager.updateView).not.toBeCalled();
 
-      viewRef.setNativeProps({});
+      expect(() => {
+        viewRef.setNativeProps({});
+      }).toWarnDev([SET_NATIVE_PROPS_DEPRECATION_MESSAGE], {
+        withoutStack: true,
+      });
       expect(UIManager.updateView).not.toBeCalled();
 
-      viewRef.setNativeProps({foo: 'baz'});
+      expect(() => {
+        viewRef.setNativeProps({foo: 'baz'});
+      }).toWarnDev([SET_NATIVE_PROPS_DEPRECATION_MESSAGE], {
+        withoutStack: true,
+      });
+
       expect(UIManager.updateView).toHaveBeenCalledTimes(1);
+      expect(UIManager.updateView).toHaveBeenCalledWith(
+        expect.any(Number),
+        'RCTView',
+        {foo: 'baz'},
+      );
+    });
+  });
+
+  it('should be able to setNativeProps on native refs', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    UIManager.updateView.mockReset();
+
+    let viewRef;
+    ReactNative.render(
+      <View
+        foo="bar"
+        ref={ref => {
+          viewRef = ref;
+        }}
+      />,
+      11,
+    );
+
+    ReactNative.setNativeProps(viewRef, {});
+    expect(UIManager.updateView).not.toBeCalled();
+
+    ReactNative.setNativeProps(viewRef, {foo: 'baz'});
+    expect(UIManager.updateView).toHaveBeenCalledTimes(1);
+    expect(UIManager.updateView).toHaveBeenCalledWith(
+      expect.any(Number),
+      'RCTView',
+      {foo: 'baz'},
+    );
+  });
+
+  it('should warn and no-op if calling setNativeProps on non native refs', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    class BasicClass extends React.Component {
+      render() {
+        return <React.Fragment />;
+      }
+    }
+
+    class Subclass extends ReactNative.NativeComponent {
+      render() {
+        return <View />;
+      }
+    }
+
+    const CreateClass = createReactClass({
+      mixins: [NativeMethodsMixin],
+      render: () => {
+        return <View />;
+      },
+    });
+
+    [BasicClass, Subclass, CreateClass].forEach(Component => {
+      UIManager.updateView.mockReset();
+
+      let viewRef;
+      ReactNative.render(
+        <Component
+          foo="bar"
+          ref={ref => {
+            viewRef = ref;
+          }}
+        />,
+        11,
+      );
+
+      expect(UIManager.updateView).not.toBeCalled();
+      expect(() => {
+        ReactNative.setNativeProps(viewRef, {foo: 'baz'});
+      }).toWarnDev(
+        [
+          "Warning: setNativeProps was called with a ref that isn't a " +
+            'native component. Use React.forwardRef to get access ' +
+            'to the underlying native component',
+        ],
+        {withoutStack: true},
+      );
+
+      expect(UIManager.updateView).not.toBeCalled();
+    });
+  });
+
+  it('should call UIManager.measure on ref.measure', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    class Subclass extends ReactNative.NativeComponent {
+      render() {
+        return <View>{this.props.children}</View>;
+      }
+    }
+
+    const CreateClass = createReactClass({
+      mixins: [NativeMethodsMixin],
+      render() {
+        return <View>{this.props.children}</View>;
+      },
+    });
+
+    [View, Subclass, CreateClass].forEach(Component => {
+      UIManager.measure.mockClear();
+
+      let viewRef;
+      ReactNative.render(
+        <Component
+          ref={ref => {
+            viewRef = ref;
+          }}
+        />,
+        11,
+      );
+
+      expect(UIManager.measure).not.toBeCalled();
+      const successCallback = jest.fn();
+      viewRef.measure(successCallback);
+      expect(UIManager.measure).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledWith(10, 10, 100, 100, 0, 0);
+    });
+  });
+
+  it('should call UIManager.measureInWindow on ref.measureInWindow', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    class Subclass extends ReactNative.NativeComponent {
+      render() {
+        return <View>{this.props.children}</View>;
+      }
+    }
+
+    const CreateClass = createReactClass({
+      mixins: [NativeMethodsMixin],
+      render() {
+        return <View>{this.props.children}</View>;
+      },
+    });
+
+    [View, Subclass, CreateClass].forEach(Component => {
+      UIManager.measureInWindow.mockClear();
+
+      let viewRef;
+      ReactNative.render(
+        <Component
+          ref={ref => {
+            viewRef = ref;
+          }}
+        />,
+        11,
+      );
+
+      expect(UIManager.measureInWindow).not.toBeCalled();
+      const successCallback = jest.fn();
+      viewRef.measureInWindow(successCallback);
+      expect(UIManager.measureInWindow).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledWith(10, 10, 100, 100);
+    });
+  });
+
+  it('should support reactTag in ref.measureLayout', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    class Subclass extends ReactNative.NativeComponent {
+      render() {
+        return <View>{this.props.children}</View>;
+      }
+    }
+
+    const CreateClass = createReactClass({
+      mixins: [NativeMethodsMixin],
+      render() {
+        return <View>{this.props.children}</View>;
+      },
+    });
+
+    [View, Subclass, CreateClass].forEach(Component => {
+      UIManager.measureLayout.mockClear();
+
+      let viewRef;
+      let otherRef;
+      ReactNative.render(
+        <Component>
+          <Component
+            foo="bar"
+            ref={ref => {
+              viewRef = ref;
+            }}
+          />
+          <Component
+            ref={ref => {
+              otherRef = ref;
+            }}
+          />
+        </Component>,
+        11,
+      );
+
+      expect(UIManager.measureLayout).not.toBeCalled();
+      const successCallback = jest.fn();
+      const failureCallback = jest.fn();
+      viewRef.measureLayout(
+        ReactNative.findNodeHandle(otherRef),
+        successCallback,
+        failureCallback,
+      );
+      expect(UIManager.measureLayout).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledWith(1, 1, 100, 100);
+    });
+  });
+
+  it('should support ref in ref.measureLayout of host components', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    [View].forEach(Component => {
+      UIManager.measureLayout.mockClear();
+
+      let viewRef;
+      let otherRef;
+      ReactNative.render(
+        <Component>
+          <Component
+            foo="bar"
+            ref={ref => {
+              viewRef = ref;
+            }}
+          />
+          <View
+            ref={ref => {
+              otherRef = ref;
+            }}
+          />
+        </Component>,
+        11,
+      );
+
+      expect(UIManager.measureLayout).not.toBeCalled();
+      const successCallback = jest.fn();
+      const failureCallback = jest.fn();
+      viewRef.measureLayout(otherRef, successCallback, failureCallback);
+      expect(UIManager.measureLayout).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledTimes(1);
+      expect(successCallback).toHaveBeenCalledWith(1, 1, 100, 100);
     });
   });
 
@@ -183,7 +487,7 @@ describe('ReactNative', () => {
     expect(mockArgs.length).toEqual(0);
   });
 
-  it('should throw when <View> is used inside of a <Text> ancestor', () => {
+  it('should not throw when <View> is used inside of a <Text> ancestor', () => {
     const Image = createReactNativeComponentClass('RCTImage', () => ({
       validAttributes: {},
       uiViewClassName: 'RCTImage',
@@ -197,14 +501,12 @@ describe('ReactNative', () => {
       uiViewClassName: 'RCTView',
     }));
 
-    expect(() =>
-      ReactNative.render(
-        <Text>
-          <View />
-        </Text>,
-        11,
-      ),
-    ).toThrow('Nesting of <View> within <Text> is not currently supported.');
+    ReactNative.render(
+      <Text>
+        <View />
+      </Text>,
+      11,
+    );
 
     // Non-View things (e.g. Image) are fine
     ReactNative.render(
@@ -257,5 +559,80 @@ describe('ReactNative', () => {
       </Text>,
       11,
     );
+  });
+
+  it('findNodeHandle should warn if used to find a host component inside StrictMode', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    let parent = undefined;
+    let child = undefined;
+
+    class ContainsStrictModeChild extends React.Component {
+      render() {
+        return (
+          <StrictMode>
+            <View ref={n => (child = n)} />
+          </StrictMode>
+        );
+      }
+    }
+
+    ReactNative.render(<ContainsStrictModeChild ref={n => (parent = n)} />, 11);
+
+    let match;
+    expect(() => (match = ReactNative.findNodeHandle(parent))).toWarnDev([
+      'Warning: findNodeHandle is deprecated in StrictMode. ' +
+        'findNodeHandle was passed an instance of ContainsStrictModeChild which renders StrictMode children. ' +
+        'Instead, add a ref directly to the element you want to reference.' +
+        '\n' +
+        '\n    in RCTView (at **)' +
+        '\n    in StrictMode (at **)' +
+        '\n    in ContainsStrictModeChild (at **)' +
+        '\n' +
+        '\nLearn more about using refs safely here:' +
+        '\nhttps://fb.me/react-strict-mode-find-node',
+    ]);
+    expect(match).toBe(child._nativeTag);
+  });
+
+  it('findNodeHandle should warn if passed a component that is inside StrictMode', () => {
+    const View = createReactNativeComponentClass('RCTView', () => ({
+      validAttributes: {foo: true},
+      uiViewClassName: 'RCTView',
+    }));
+
+    let parent = undefined;
+    let child = undefined;
+
+    class IsInStrictMode extends React.Component {
+      render() {
+        return <View ref={n => (child = n)} />;
+      }
+    }
+
+    ReactNative.render(
+      <StrictMode>
+        <IsInStrictMode ref={n => (parent = n)} />
+      </StrictMode>,
+      11,
+    );
+
+    let match;
+    expect(() => (match = ReactNative.findNodeHandle(parent))).toWarnDev([
+      'Warning: findNodeHandle is deprecated in StrictMode. ' +
+        'findNodeHandle was passed an instance of IsInStrictMode which is inside StrictMode. ' +
+        'Instead, add a ref directly to the element you want to reference.' +
+        '\n' +
+        '\n    in RCTView (at **)' +
+        '\n    in IsInStrictMode (at **)' +
+        '\n    in StrictMode (at **)' +
+        '\n' +
+        '\nLearn more about using refs safely here:' +
+        '\nhttps://fb.me/react-strict-mode-find-node',
+    ]);
+    expect(match).toBe(child._nativeTag);
   });
 });

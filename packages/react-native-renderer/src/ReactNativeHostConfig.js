@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,24 +7,30 @@
  * @flow
  */
 
-import type {ReactNativeBaseComponentViewConfig} from './ReactNativeTypes';
+import type {
+  ReactNativeBaseComponentViewConfig,
+  ReactNativeEventResponder,
+} from './ReactNativeTypes';
+import type {ReactEventComponentInstance} from 'shared/ReactTypes';
 
-import emptyObject from 'fbjs/lib/emptyObject';
-import invariant from 'fbjs/lib/invariant';
+import invariant from 'shared/invariant';
 
 // Modules provided by RN:
-import UIManager from 'UIManager';
-import deepFreezeAndThrowOnMutationInDev from 'deepFreezeAndThrowOnMutationInDev';
+import {
+  ReactNativeViewConfigRegistry,
+  UIManager,
+  deepFreezeAndThrowOnMutationInDev,
+} from 'react-native/Libraries/ReactPrivate/ReactNativePrivateInterface';
 
-import * as ReactNativeViewConfigRegistry from 'ReactNativeViewConfigRegistry';
-import * as ReactNativeAttributePayload from './ReactNativeAttributePayload';
+import {create, diff} from './ReactNativeAttributePayload';
 import {
   precacheFiberNode,
   uncacheFiberNode,
   updateFiberProps,
 } from './ReactNativeComponentTree';
 import ReactNativeFiberHostComponent from './ReactNativeFiberHostComponent';
-import * as ReactNativeFrameScheduling from './ReactNativeFrameScheduling';
+
+const {get: getViewConfigForType} = ReactNativeViewConfigRegistry;
 
 export type Type = string;
 export type Props = Object;
@@ -32,7 +38,7 @@ export type Container = number;
 export type Instance = {
   _children: Array<Instance | number>,
   _nativeTag: number,
-  viewConfig: ReactNativeBaseComponentViewConfig,
+  viewConfig: ReactNativeBaseComponentViewConfig<>,
 };
 export type TextInstance = number;
 export type HydratableInstance = Instance | TextInstance;
@@ -42,6 +48,15 @@ export type HostContext = $ReadOnly<{|
 |}>;
 export type UpdatePayload = Object; // Unused
 export type ChildSet = void; // Unused
+
+export type TimeoutHandle = TimeoutID;
+export type NoTimeout = -1;
+export type EventResponder = ReactNativeEventResponder;
+
+const UPDATE_SIGNAL = {};
+if (__DEV__) {
+  Object.freeze(UPDATE_SIGNAL);
+}
 
 // Counter for uniquely identifying views.
 // % 10 === 1 means it is a rootTag.
@@ -85,7 +100,7 @@ export function createInstance(
   internalInstanceHandle: Object,
 ): Instance {
   const tag = allocateTag();
-  const viewConfig = ReactNativeViewConfigRegistry.get(type);
+  const viewConfig = getViewConfigForType(type);
 
   if (__DEV__) {
     for (const key in viewConfig.validAttributes) {
@@ -95,15 +110,7 @@ export function createInstance(
     }
   }
 
-  invariant(
-    type !== 'RCTView' || !hostContext.isInAParentText,
-    'Nesting of <View> within <Text> is not currently supported.',
-  );
-
-  const updatePayload = ReactNativeAttributePayload.create(
-    props,
-    viewConfig.validAttributes,
-  );
+  const updatePayload = create(props, viewConfig.validAttributes);
 
   UIManager.createView(
     tag, // reactTag
@@ -202,6 +209,21 @@ export function getChildHostContext(
   }
 }
 
+export function getChildHostContextForEventComponent(
+  parentHostContext: HostContext,
+) {
+  // TODO: add getChildHostContextForEventComponent implementation
+  return parentHostContext;
+}
+
+export function getChildHostContextForEventTarget(
+  parentHostContext: HostContext,
+  type: Symbol | number,
+) {
+  // TODO: add getChildHostContextForEventTarget implementation
+  return parentHostContext;
+}
+
 export function getPublicInstance(instance: Instance): * {
   return instance;
 }
@@ -218,19 +240,19 @@ export function prepareUpdate(
   rootContainerInstance: Container,
   hostContext: HostContext,
 ): null | Object {
-  return emptyObject;
+  return UPDATE_SIGNAL;
 }
 
 export function resetAfterCommit(containerInfo: Container): void {
   // Noop
 }
 
-export const now = ReactNativeFrameScheduling.now;
 export const isPrimaryRenderer = true;
-export const scheduleDeferredCallback =
-  ReactNativeFrameScheduling.scheduleDeferredCallback;
-export const cancelDeferredCallback =
-  ReactNativeFrameScheduling.cancelDeferredCallback;
+export const shouldWarnUnactedUpdates = true;
+
+export const scheduleTimeout = setTimeout;
+export const cancelTimeout = clearTimeout;
+export const noTimeout = -1;
 
 export function shouldDeprioritizeSubtree(type: string, props: Props): boolean {
   return false;
@@ -330,11 +352,7 @@ export function commitUpdate(
 
   updateFiberProps(instance._nativeTag, newProps);
 
-  const updatePayload = ReactNativeAttributePayload.diff(
-    oldProps,
-    newProps,
-    viewConfig.validAttributes,
-  );
+  const updatePayload = diff(oldProps, newProps, viewConfig.validAttributes);
 
   // Avoid the overhead of bridge calls if there's no update.
   // This is an expensive no-op for Android, and causes an unnecessary
@@ -439,4 +457,85 @@ export function removeChildFromContainer(
 
 export function resetTextContent(instance: Instance): void {
   // Noop
+}
+
+export function hideInstance(instance: Instance): void {
+  const viewConfig = instance.viewConfig;
+  const updatePayload = create(
+    {style: {display: 'none'}},
+    viewConfig.validAttributes,
+  );
+  UIManager.updateView(
+    instance._nativeTag,
+    viewConfig.uiViewClassName,
+    updatePayload,
+  );
+}
+
+export function hideTextInstance(textInstance: TextInstance): void {
+  throw new Error('Not yet implemented.');
+}
+
+export function unhideInstance(instance: Instance, props: Props): void {
+  const viewConfig = instance.viewConfig;
+  const updatePayload = diff(
+    {...props, style: [props.style, {display: 'none'}]},
+    props,
+    viewConfig.validAttributes,
+  );
+  UIManager.updateView(
+    instance._nativeTag,
+    viewConfig.uiViewClassName,
+    updatePayload,
+  );
+}
+
+export function unhideTextInstance(
+  textInstance: TextInstance,
+  text: string,
+): void {
+  throw new Error('Not yet implemented.');
+}
+
+export function mountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function updateEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function unmountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance<any, any, any>,
+): void {
+  throw new Error('Not yet implemented.');
+}
+
+export function getEventTargetChildElement(
+  type: Symbol | number,
+  props: Props,
+): null {
+  throw new Error('Not yet implemented.');
+}
+
+export function handleEventTarget(
+  type: Symbol | number,
+  props: Props,
+  rootContainerInstance: Container,
+  internalInstanceHandle: Object,
+): boolean {
+  throw new Error('Not yet implemented.');
+}
+
+export function commitEventTarget(
+  type: Symbol | number,
+  props: Props,
+  instance: Instance,
+  parentInstance: Instance,
+): void {
+  throw new Error('Not yet implemented.');
 }

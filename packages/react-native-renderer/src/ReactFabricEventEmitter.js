@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,10 @@
 
 import type {Fiber} from 'react-reconciler/src/ReactFiber';
 
-import {getListener, runExtractedEventsInBatch} from 'events/EventPluginHub';
+import {
+  getListener,
+  runExtractedPluginEventsInBatch,
+} from 'events/EventPluginHub';
 import {registrationNameModules} from 'events/EventPluginRegistry';
 import {batchedUpdates} from 'events/ReactGenericBatching';
 
@@ -19,13 +22,13 @@ import type {TopLevelType} from 'events/TopLevelEventTypes';
 export {getListener, registrationNameModules as registrationNames};
 
 export function dispatchEvent(
-  target: Object,
+  target: null | Object,
   topLevelType: TopLevelType,
   nativeEvent: AnyNativeEvent,
 ) {
-  const targetFiber = (target: Fiber);
+  const targetFiber = (target: null | Fiber);
   batchedUpdates(function() {
-    runExtractedEventsInBatch(
+    runExtractedPluginEventsInBatch(
       topLevelType,
       targetFiber,
       nativeEvent,

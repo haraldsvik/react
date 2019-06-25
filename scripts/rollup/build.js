@@ -1,6 +1,6 @@
 'use strict';
 
-const {rollup} = require('rollup');
+const rollup = require('rollup');
 const babel = require('rollup-plugin-babel');
 const closure = require('./plugins/closure-plugin');
 const commonjs = require('rollup-plugin-commonjs');
@@ -18,6 +18,7 @@ const Stats = require('./stats');
 const Sync = require('./sync');
 const sizes = require('./plugins/sizes-plugin');
 const useForks = require('./plugins/use-forks-plugin');
+const stripUnusedImports = require('./plugins/strip-unused-imports');
 const extractErrorCodes = require('../error-codes/extract-errors');
 const Packaging = require('./packaging');
 const {asyncCopyTo, asyncRimRaf} = require('./utils');
@@ -37,25 +38,47 @@ process.on('unhandledRejection', err => {
 const {
   UMD_DEV,
   UMD_PROD,
+  UMD_PROFILING,
   NODE_DEV,
   NODE_PROD,
   NODE_PROFILING,
   FB_WWW_DEV,
   FB_WWW_PROD,
+  FB_WWW_PROFILING,
   RN_OSS_DEV,
   RN_OSS_PROD,
   RN_OSS_PROFILING,
   RN_FB_DEV,
   RN_FB_PROD,
+  RN_FB_PROFILING,
 } = Bundles.bundleTypes;
 
-const requestedBundleTypes = (argv.type || '')
-  .split(',')
-  .map(type => type.toUpperCase());
-const requestedBundleNames = (argv._[0] || '')
-  .split(',')
-  .map(type => type.toLowerCase());
+function parseRequestedNames(names, toCase) {
+  let result = [];
+  for (let i = 0; i < names.length; i++) {
+    let splitNames = names[i].split(',');
+    for (let j = 0; j < splitNames.length; j++) {
+      let name = splitNames[j].trim();
+      if (!name) {
+        continue;
+      }
+      if (toCase === 'uppercase') {
+        name = name.toUpperCase();
+      } else if (toCase === 'lowercase') {
+        name = name.toLowerCase();
+      }
+      result.push(name);
+    }
+  }
+  return result;
+}
+
+const requestedBundleTypes = argv.type
+  ? parseRequestedNames([argv.type], 'uppercase')
+  : [];
+const requestedBundleNames = parseRequestedNames(argv._, 'lowercase');
 const forcePrettyOutput = argv.pretty;
+const isWatchMode = argv.watch;
 const syncFBSourcePath = argv['sync-fbsource'];
 const syncWWWPath = argv['sync-www'];
 const shouldExtractErrors = argv['extract-errors'];
@@ -87,10 +110,11 @@ function getBabelConfig(updateBabelOptions, bundleType, filename) {
   switch (bundleType) {
     case FB_WWW_DEV:
     case FB_WWW_PROD:
+    case FB_WWW_PROFILING:
       return Object.assign({}, options, {
         plugins: options.plugins.concat([
           // Minify invariant messages
-          require('../error-codes/replace-invariant-error-codes'),
+          require('../error-codes/transform-error-messages'),
           // Wrap warning() calls in a __DEV__ check so they are stripped from production.
           require('../babel/wrap-warning-with-env-check'),
         ]),
@@ -100,14 +124,21 @@ function getBabelConfig(updateBabelOptions, bundleType, filename) {
     case RN_OSS_PROFILING:
     case RN_FB_DEV:
     case RN_FB_PROD:
+    case RN_FB_PROFILING:
       return Object.assign({}, options, {
         plugins: options.plugins.concat([
+          [
+            require('../error-codes/transform-error-messages'),
+            // Preserve full error messages in React Native build
+            {noMinify: true},
+          ],
           // Wrap warning() calls in a __DEV__ check so they are stripped from production.
           require('../babel/wrap-warning-with-env-check'),
         ]),
       });
     case UMD_DEV:
     case UMD_PROD:
+    case UMD_PROFILING:
     case NODE_DEV:
     case NODE_PROD:
     case NODE_PROFILING:
@@ -116,7 +147,7 @@ function getBabelConfig(updateBabelOptions, bundleType, filename) {
           // Use object-assign polyfill in open source
           path.resolve('./scripts/babel/transform-object-assign-require'),
           // Minify invariant messages
-          require('../error-codes/replace-invariant-error-codes'),
+          require('../error-codes/transform-error-messages'),
           // Wrap warning() calls in a __DEV__ check so they are stripped from production.
           require('../babel/wrap-warning-with-env-check'),
         ]),
@@ -153,17 +184,20 @@ function getFormat(bundleType) {
   switch (bundleType) {
     case UMD_DEV:
     case UMD_PROD:
+    case UMD_PROFILING:
       return `umd`;
     case NODE_DEV:
     case NODE_PROD:
     case NODE_PROFILING:
     case FB_WWW_DEV:
     case FB_WWW_PROD:
+    case FB_WWW_PROFILING:
     case RN_OSS_DEV:
     case RN_OSS_PROD:
     case RN_OSS_PROFILING:
     case RN_FB_DEV:
     case RN_FB_PROD:
+    case RN_FB_PROFILING:
       return `cjs`;
   }
 }
@@ -176,6 +210,8 @@ function getFilename(name, globalName, bundleType) {
       return `${name}.development.js`;
     case UMD_PROD:
       return `${name}.production.min.js`;
+    case UMD_PROFILING:
+      return `${name}.profiling.min.js`;
     case NODE_DEV:
       return `${name}.development.js`;
     case NODE_PROD:
@@ -190,6 +226,8 @@ function getFilename(name, globalName, bundleType) {
     case RN_OSS_PROD:
     case RN_FB_PROD:
       return `${globalName}-prod.js`;
+    case FB_WWW_PROFILING:
+    case RN_FB_PROFILING:
     case RN_OSS_PROFILING:
       return `${globalName}-profiling.js`;
   }
@@ -205,11 +243,14 @@ function isProductionBundleType(bundleType) {
       return false;
     case UMD_PROD:
     case NODE_PROD:
+    case UMD_PROFILING:
     case NODE_PROFILING:
     case FB_WWW_PROD:
+    case FB_WWW_PROFILING:
     case RN_OSS_PROD:
     case RN_OSS_PROFILING:
     case RN_FB_PROD:
+    case RN_FB_PROFILING:
       return true;
     default:
       throw new Error(`Unknown type: ${bundleType}`);
@@ -229,12 +270,29 @@ function isProfilingBundleType(bundleType) {
     case UMD_DEV:
     case UMD_PROD:
       return false;
+    case FB_WWW_PROFILING:
     case NODE_PROFILING:
+    case RN_FB_PROFILING:
     case RN_OSS_PROFILING:
+    case UMD_PROFILING:
       return true;
     default:
       throw new Error(`Unknown type: ${bundleType}`);
   }
+}
+
+function forbidFBJSImports() {
+  return {
+    name: 'forbidFBJSImports',
+    resolveId(importee, importer) {
+      if (/^fbjs\//.test(importee)) {
+        throw new Error(
+          `Don't import ${importee} (found in ${importer}). ` +
+            `Use the utilities in packages/shared/ instead.`
+        );
+      }
+    },
+  };
 }
 
 function getPlugins(
@@ -246,20 +304,27 @@ function getPlugins(
   bundleType,
   globalName,
   moduleType,
-  modulesToStub
+  pureExternalModules
 ) {
   const findAndRecordErrorCodes = extractErrorCodes(errorCodeOpts);
   const forks = Modules.getForks(bundleType, entry, moduleType);
   const isProduction = isProductionBundleType(bundleType);
   const isProfiling = isProfilingBundleType(bundleType);
-  const isInGlobalScope = bundleType === UMD_DEV || bundleType === UMD_PROD;
-  const isFBBundle = bundleType === FB_WWW_DEV || bundleType === FB_WWW_PROD;
+  const isUMDBundle =
+    bundleType === UMD_DEV ||
+    bundleType === UMD_PROD ||
+    bundleType === UMD_PROFILING;
+  const isFBBundle =
+    bundleType === FB_WWW_DEV ||
+    bundleType === FB_WWW_PROD ||
+    bundleType === FB_WWW_PROFILING;
   const isRNBundle =
     bundleType === RN_OSS_DEV ||
     bundleType === RN_OSS_PROD ||
     bundleType === RN_OSS_PROFILING ||
     bundleType === RN_FB_DEV ||
-    bundleType === RN_FB_PROD;
+    bundleType === RN_FB_PROD ||
+    bundleType === RN_FB_PROFILING;
   const shouldStayReadable = isFBBundle || isRNBundle || forcePrettyOutput;
   return [
     // Extract error codes from invariant() messages into a file.
@@ -271,6 +336,8 @@ function getPlugins(
     },
     // Shim any modules that need forking in this environment.
     useForks(forks),
+    // Ensure we don't try to bundle any fbjs modules.
+    forbidFBJSImports(),
     // Use Node resolution mechanism.
     resolve({
       skip: externals,
@@ -291,25 +358,18 @@ function getPlugins(
     replace({
       __DEV__: isProduction ? 'false' : 'true',
       __PROFILE__: isProfiling || !isProduction ? 'true' : 'false',
+      __UMD__: isUMDBundle ? 'true' : 'false',
       'process.env.NODE_ENV': isProduction ? "'production'" : "'development'",
     }),
     // We still need CommonJS for external deps like object-assign.
     commonjs(),
-    // www still needs require('React') rather than require('react')
-    isFBBundle && {
-      transformBundle(source) {
-        return source
-          .replace(/require\(['"]react['"]\)/g, "require('React')")
-          .replace(/require\(['"]react-is['"]\)/g, "require('ReactIs')");
-      },
-    },
     // Apply dead code elimination and/or minification.
     isProduction &&
       closure(
         Object.assign({}, closureOptions, {
           // Don't let it create global variables in the browser.
           // https://github.com/facebook/react/issues/10909
-          assume_function_wrapper: !isInGlobalScope,
+          assume_function_wrapper: !isUMDBundle,
           // Works because `google-closure-compiler-js` is forked in Yarn lockfile.
           // We can remove this if GCC merges my PR:
           // https://github.com/google/closure-compiler/pull/2707
@@ -317,8 +377,11 @@ function getPlugins(
           renaming: !shouldStayReadable,
         })
       ),
+    // HACK to work around the fact that Rollup isn't removing unused, pure-module imports.
+    // Note that this plugin must be called after closure applies DCE.
+    isProduction && stripUnusedImports(pureExternalModules),
     // Add the whitespace back if necessary.
-    shouldStayReadable && prettier(),
+    shouldStayReadable && prettier({parser: 'babylon'}),
     // License and haste headers, top-level `if` blocks.
     {
       transformBundle(source) {
@@ -367,7 +430,12 @@ function shouldSkipBundle(bundle, bundleType) {
   }
   if (requestedBundleNames.length > 0) {
     const isAskingForDifferentNames = requestedBundleNames.every(
-      requestedName => bundle.label.indexOf(requestedName) === -1
+      // If the name ends with `something/index` we only match if the
+      // entry ends in something. Such as `react-dom/index` only matches
+      // `react-dom` but not `react-dom/server`. Everything else is fuzzy
+      // search.
+      requestedName =>
+        (bundle.entry + '/index.js').indexOf(requestedName) === -1
     );
     if (isAskingForDifferentNames) {
       return true;
@@ -388,7 +456,11 @@ async function createBundle(bundle, bundleType) {
   const packageName = Packaging.getPackageName(bundle.entry);
 
   let resolvedEntry = require.resolve(bundle.entry);
-  if (bundleType === FB_WWW_DEV || bundleType === FB_WWW_PROD) {
+  if (
+    bundleType === FB_WWW_DEV ||
+    bundleType === FB_WWW_PROD ||
+    bundleType === FB_WWW_PROFILING
+  ) {
     const resolvedFBEntry = resolvedEntry.replace('.js', '.fb.js');
     if (fs.existsSync(resolvedFBEntry)) {
       resolvedEntry = resolvedFBEntry;
@@ -396,7 +468,9 @@ async function createBundle(bundle, bundleType) {
   }
 
   const shouldBundleDependencies =
-    bundleType === UMD_DEV || bundleType === UMD_PROD;
+    bundleType === UMD_DEV ||
+    bundleType === UMD_PROD ||
+    bundleType === UMD_PROFILING;
   const peerGlobals = Modules.getPeerGlobals(bundle.externals, bundleType);
   let externals = Object.keys(peerGlobals);
   if (!shouldBundleDependencies) {
@@ -432,10 +506,13 @@ async function createBundle(bundle, bundleType) {
       bundleType,
       bundle.global,
       bundle.moduleType,
-      bundle.modulesToStub
+      pureExternalModules
     ),
     // We can't use getters in www.
-    legacy: bundleType === FB_WWW_DEV || bundleType === FB_WWW_PROD,
+    legacy:
+      bundleType === FB_WWW_DEV ||
+      bundleType === FB_WWW_PROD ||
+      bundleType === FB_WWW_PROFILING,
   };
   const [mainOutputPath, ...otherOutputPaths] = Packaging.getBundleOutputPaths(
     bundleType,
@@ -450,19 +527,42 @@ async function createBundle(bundle, bundleType) {
     bundleType
   );
 
-  console.log(`${chalk.bgYellow.black(' BUILDING ')} ${logKey}`);
-  try {
-    const result = await rollup(rollupConfig);
-    await result.write(rollupOutputOptions);
-  } catch (error) {
-    console.log(`${chalk.bgRed.black(' OH NOES! ')} ${logKey}\n`);
-    handleRollupError(error);
-    throw error;
+  if (isWatchMode) {
+    rollupConfig.output = [rollupOutputOptions];
+    const watcher = rollup.watch(rollupConfig);
+    watcher.on('event', async event => {
+      switch (event.code) {
+        case 'BUNDLE_START':
+          console.log(`${chalk.bgYellow.black(' BUILDING ')} ${logKey}`);
+          break;
+        case 'BUNDLE_END':
+          for (let i = 0; i < otherOutputPaths.length; i++) {
+            await asyncCopyTo(mainOutputPath, otherOutputPaths[i]);
+          }
+          console.log(`${chalk.bgGreen.black(' COMPLETE ')} ${logKey}\n`);
+          break;
+        case 'ERROR':
+        case 'FATAL':
+          console.log(`${chalk.bgRed.black(' OH NOES! ')} ${logKey}\n`);
+          handleRollupError(event.error);
+          break;
+      }
+    });
+  } else {
+    console.log(`${chalk.bgYellow.black(' BUILDING ')} ${logKey}`);
+    try {
+      const result = await rollup.rollup(rollupConfig);
+      await result.write(rollupOutputOptions);
+    } catch (error) {
+      console.log(`${chalk.bgRed.black(' OH NOES! ')} ${logKey}\n`);
+      handleRollupError(error);
+      throw error;
+    }
+    for (let i = 0; i < otherOutputPaths.length; i++) {
+      await asyncCopyTo(mainOutputPath, otherOutputPaths[i]);
+    }
+    console.log(`${chalk.bgGreen.black(' COMPLETE ')} ${logKey}\n`);
   }
-  for (let i = 0; i < otherOutputPaths.length; i++) {
-    await asyncCopyTo(mainOutputPath, otherOutputPaths[i]);
-  }
-  console.log(`${chalk.bgGreen.black(' COMPLETE ')} ${logKey}\n`);
 }
 
 function handleRollupWarning(warning) {
@@ -538,20 +638,39 @@ async function buildEverything() {
 
   // Run them serially for better console output
   // and to avoid any potential race conditions.
+
+  let bundles = [];
   // eslint-disable-next-line no-for-of-loops/no-for-of-loops
   for (const bundle of Bundles.bundles) {
-    await createBundle(bundle, UMD_DEV);
-    await createBundle(bundle, UMD_PROD);
-    await createBundle(bundle, NODE_DEV);
-    await createBundle(bundle, NODE_PROD);
-    await createBundle(bundle, NODE_PROFILING);
-    await createBundle(bundle, FB_WWW_DEV);
-    await createBundle(bundle, FB_WWW_PROD);
-    await createBundle(bundle, RN_OSS_DEV);
-    await createBundle(bundle, RN_OSS_PROD);
-    await createBundle(bundle, RN_OSS_PROFILING);
-    await createBundle(bundle, RN_FB_DEV);
-    await createBundle(bundle, RN_FB_PROD);
+    bundles.push(
+      [bundle, UMD_DEV],
+      [bundle, UMD_PROD],
+      [bundle, UMD_PROFILING],
+      [bundle, NODE_DEV],
+      [bundle, NODE_PROD],
+      [bundle, NODE_PROFILING],
+      [bundle, FB_WWW_DEV],
+      [bundle, FB_WWW_PROD],
+      [bundle, FB_WWW_PROFILING],
+      [bundle, RN_OSS_DEV],
+      [bundle, RN_OSS_PROD],
+      [bundle, RN_OSS_PROFILING],
+      [bundle, RN_FB_DEV],
+      [bundle, RN_FB_PROD],
+      [bundle, RN_FB_PROFILING]
+    );
+  }
+
+  if (!shouldExtractErrors && process.env.CIRCLE_NODE_TOTAL) {
+    // In CI, parallelize bundles across multiple tasks.
+    const nodeTotal = parseInt(process.env.CIRCLE_NODE_TOTAL, 10);
+    const nodeIndex = parseInt(process.env.CIRCLE_NODE_INDEX, 10);
+    bundles = bundles.filter((_, i) => i % nodeTotal === nodeIndex);
+  }
+
+  // eslint-disable-next-line no-for-of-loops/no-for-of-loops
+  for (const [bundle, bundleType] of bundles) {
+    await createBundle(bundle, bundleType);
   }
 
   await Packaging.copyAllShims();

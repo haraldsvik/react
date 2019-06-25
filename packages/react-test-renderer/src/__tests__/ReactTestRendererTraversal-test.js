@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -39,9 +39,9 @@ describe('ReactTestRendererTraversal', () => {
               <View void="void" />
               <View void="void" />
             </ExampleNull>
-            <React.unstable_Profiler id="test" onRender={() => {}}>
+            <React.Profiler id="test" onRender={() => {}}>
               <ExampleForwardRef qux="qux" />
-            </React.unstable_Profiler>
+            </React.Profiler>
             <React.Fragment>
               <React.Fragment>
                 <Context.Provider value={null}>
@@ -201,7 +201,7 @@ describe('ReactTestRendererTraversal', () => {
   });
 
   it('can have special nodes as roots', () => {
-    const FR = React.forwardRef(props => <section {...props} />);
+    const FR = React.forwardRef((props, ref) => <section {...props} />);
     expect(
       ReactTestRenderer.create(
         <FR>

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,26 +33,52 @@ export type MeasureLayoutOnSuccessCallback = (
   height: number,
 ) => void;
 
-type BubblingEventType = {
-  phasedRegistrationNames: {
-    captured: string,
-    bubbled: string,
-  },
-};
+type AttributeType =
+  | true
+  | $ReadOnly<{|
+      diff?: <T>(arg1: T, arg2: T) => boolean,
+      process?: (arg1: any) => any,
+    |}>;
 
-type DirectEventType = {
-  registrationName: string,
-};
+export type AttributeConfiguration<
+  TProps = string,
+  TStyleProps = string,
+> = $ReadOnly<{
+  [propName: TProps]: AttributeType,
+  style: $ReadOnly<{
+    [propName: TStyleProps]: AttributeType,
+  }>,
+}>;
 
-export type ReactNativeBaseComponentViewConfig = {
-  validAttributes: Object,
+export type ReactNativeBaseComponentViewConfig<
+  TProps = string,
+  TStyleProps = string,
+> = $ReadOnly<{|
+  baseModuleName?: string,
+  bubblingEventTypes?: $ReadOnly<{
+    [eventName: string]: $ReadOnly<{|
+      phasedRegistrationNames: $ReadOnly<{|
+        captured: string,
+        bubbled: string,
+      |}>,
+    |}>,
+  }>,
+  Commands?: $ReadOnly<{
+    [commandName: string]: number,
+  }>,
+  directEventTypes?: $ReadOnly<{
+    [eventName: string]: $ReadOnly<{|
+      registrationName: string,
+    |}>,
+  }>,
+  NativeProps?: $ReadOnly<{
+    [propName: string]: string,
+  }>,
   uiViewClassName: string,
-  bubblingEventTypes?: {[topLevelType: string]: BubblingEventType},
-  directEventTypes?: {[topLevelType: string]: DirectEventType},
-  propTypes?: Object,
-};
+  validAttributes: AttributeConfiguration<TProps, TStyleProps>,
+|}>;
 
-export type ViewConfigGetter = () => ReactNativeBaseComponentViewConfig;
+export type ViewConfigGetter = () => ReactNativeBaseComponentViewConfig<>;
 
 /**
  * Class only exists for its Flow type.
@@ -63,7 +89,7 @@ class ReactNativeComponent<Props> extends React.Component<Props> {
   measure(callback: MeasureOnSuccessCallback): void {}
   measureInWindow(callback: MeasureInWindowOnSuccessCallback): void {}
   measureLayout(
-    relativeToNativeNode: number,
+    relativeToNativeNode: number | Object,
     onSuccess: MeasureLayoutOnSuccessCallback,
     onFail?: () => void,
   ): void {}
@@ -80,7 +106,7 @@ export type NativeMethodsMixinType = {
   measure(callback: MeasureOnSuccessCallback): void,
   measureInWindow(callback: MeasureInWindowOnSuccessCallback): void,
   measureLayout(
-    relativeToNativeNode: number,
+    relativeToNativeNode: number | Object,
     onSuccess: MeasureLayoutOnSuccessCallback,
     onFail: () => void,
   ): void,
@@ -105,6 +131,7 @@ type SecretInternalsFabricType = {
 export type ReactNativeType = {
   NativeComponent: typeof ReactNativeComponent,
   findNodeHandle(componentOrHandle: any): ?number,
+  setNativeProps(handle: any, nativeProps: Object): void,
   render(
     element: React$Element<any>,
     containerTag: any,
@@ -120,6 +147,7 @@ export type ReactNativeType = {
 export type ReactFabricType = {
   NativeComponent: typeof ReactNativeComponent,
   findNodeHandle(componentOrHandle: any): ?number,
+  setNativeProps(handle: any, nativeProps: Object): void,
   render(
     element: React$Element<any>,
     containerTag: any,
@@ -129,3 +157,6 @@ export type ReactFabricType = {
 
   __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: SecretInternalsFabricType,
 };
+
+// TODO will be addressed with upcoming React Flare support
+export type ReactNativeEventResponder = any;

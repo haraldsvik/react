@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,8 +8,11 @@
 import SyntheticUIEvent from './SyntheticUIEvent';
 import getEventModifierState from './getEventModifierState';
 
-let previousScreenX = null;
-let previousScreenY = null;
+let previousScreenX = 0;
+let previousScreenY = 0;
+// Use flags to signal movementX/Y has already been set
+let isMovementXSet = false;
+let isMovementYSet = false;
 
 /**
  * @interface MouseEvent
@@ -44,7 +47,13 @@ const SyntheticMouseEvent = SyntheticUIEvent.extend({
 
     const screenX = previousScreenX;
     previousScreenX = event.screenX;
-    return screenX ? event.screenX - screenX : 0;
+
+    if (!isMovementXSet) {
+      isMovementXSet = true;
+      return 0;
+    }
+
+    return event.type === 'mousemove' ? event.screenX - screenX : 0;
   },
   movementY: function(event) {
     if ('movementY' in event) {
@@ -53,7 +62,13 @@ const SyntheticMouseEvent = SyntheticUIEvent.extend({
 
     const screenY = previousScreenY;
     previousScreenY = event.screenY;
-    return screenY ? event.screenY - screenY : 0;
+
+    if (!isMovementYSet) {
+      isMovementYSet = true;
+      return 0;
+    }
+
+    return event.type === 'mousemove' ? event.screenY - screenY : 0;
   },
 });
 

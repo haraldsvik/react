@@ -1,21 +1,25 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-import * as ReactScheduler from 'shared/ReactScheduler';
 import Transform from 'art/core/transform';
 import Mode from 'art/modes/current';
-import invariant from 'fbjs/lib/invariant';
-import emptyObject from 'fbjs/lib/emptyObject';
+import invariant from 'shared/invariant';
 
 import {TYPES, EVENT_TYPES, childrenAsString} from './ReactARTInternals';
+import type {ReactEventComponentInstance} from 'shared/ReactTypes';
 
 const pooledTransform = new Transform();
 
+const NO_CONTEXT = {};
 const UPDATE_SIGNAL = {};
+if (__DEV__) {
+  Object.freeze(NO_CONTEXT);
+  Object.freeze(UPDATE_SIGNAL);
+}
 
 /** Helper Methods */
 
@@ -318,15 +322,24 @@ export function shouldDeprioritizeSubtree(type, props) {
 }
 
 export function getRootHostContext() {
-  return emptyObject;
+  return NO_CONTEXT;
 }
 
 export function getChildHostContext() {
-  return emptyObject;
+  return NO_CONTEXT;
 }
 
-export const scheduleDeferredCallback = ReactScheduler.scheduleWork;
-export const cancelDeferredCallback = ReactScheduler.cancelScheduledWork;
+export function getChildHostContextForEventComponent() {
+  return NO_CONTEXT;
+}
+
+export function getChildHostContextForEventTarget() {
+  return NO_CONTEXT;
+}
+
+export const scheduleTimeout = setTimeout;
+export const cancelTimeout = clearTimeout;
+export const noTimeout = -1;
 
 export function shouldSetTextContent(type, props) {
   return (
@@ -334,10 +347,11 @@ export function shouldSetTextContent(type, props) {
   );
 }
 
-export const now = ReactScheduler.now;
-
 // The ART renderer is secondary to the React DOM renderer.
 export const isPrimaryRenderer = false;
+
+// The ART renderer shouldn't trigger missing act() warnings
+export const shouldWarnUnactedUpdates = false;
 
 export const supportsMutation = true;
 
@@ -397,4 +411,65 @@ export function commitUpdate(
   newProps,
 ) {
   instance._applyProps(instance, newProps, oldProps);
+}
+
+export function hideInstance(instance) {
+  instance.hide();
+}
+
+export function hideTextInstance(textInstance) {
+  // Noop
+}
+
+export function unhideInstance(instance, props) {
+  if (props.visible == null || props.visible) {
+    instance.show();
+  }
+}
+
+export function unhideTextInstance(textInstance, text): void {
+  // Noop
+}
+
+export function mountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function updateEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function unmountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+): void {
+  throw new Error('Not yet implemented.');
+}
+
+export function getEventTargetChildElement(
+  type: Symbol | number,
+  props: Props,
+): null {
+  throw new Error('Not yet implemented.');
+}
+
+export function handleEventTarget(
+  type: Symbol | number,
+  props: Props,
+  rootContainerInstance: Container,
+  internalInstanceHandle: Object,
+): boolean {
+  throw new Error('Not yet implemented.');
+}
+
+export function commitEventTarget(
+  type: Symbol | number,
+  props: Props,
+  instance: Instance,
+  parentInstance: Instance,
+): void {
+  throw new Error('Not yet implemented.');
 }

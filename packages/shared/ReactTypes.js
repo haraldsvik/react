@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2014-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,44 +9,21 @@
 
 export type ReactNode =
   | React$Element<any>
-  | ReactCall<any>
-  | ReactReturn<any>
   | ReactPortal
   | ReactText
   | ReactFragment
   | ReactProvider<any>
-  | ReactConsumer<any>;
+  | ReactConsumer<any>
+  | ReactEventComponent<any, any, any>
+  | ReactEventTarget;
+
+export type ReactEmpty = null | void | boolean;
 
 export type ReactFragment = ReactEmpty | Iterable<React$Node>;
 
 export type ReactNodeList = ReactEmpty | React$Node;
 
 export type ReactText = string | number;
-
-export type ReactEmpty = null | void | boolean;
-
-export type ReactCall<V> = {
-  $$typeof: Symbol | number,
-  type: Symbol | number,
-  key: null | string,
-  ref: null,
-  props: {
-    props: any,
-    // This should be a more specific CallHandler
-    handler: (props: any, returns: Array<V>) => ReactNodeList,
-    children?: ReactNodeList,
-  },
-};
-
-export type ReactReturn<V> = {
-  $$typeof: Symbol | number,
-  type: Symbol | number,
-  key: null,
-  ref: null,
-  props: {
-    value: V,
-  },
-};
 
 export type ReactProvider<T> = {
   $$typeof: Symbol | number,
@@ -81,12 +58,10 @@ export type ReactContext<T> = {
   Provider: ReactProviderType<T>,
 
   _calculateChangedBits: ((a: T, b: T) => number) | null,
-  _defaultValue: T,
 
   _currentValue: T,
   _currentValue2: T,
-  _changedBits: number,
-  _changedBits2: number,
+  _threadCount: number,
 
   // DEV only
   _currentRenderer?: Object | null,
@@ -105,3 +80,45 @@ export type ReactPortal = {
 export type RefObject = {|
   current: any,
 |};
+
+export type ReactEventComponentInstance<T, E, C> = {|
+  currentFiber: mixed,
+  isHook: boolean,
+  props: Object,
+  responder: ReactEventResponder<T, E, C>,
+  rootEventTypes: null | Set<string>,
+  rootInstance: null | mixed,
+  state: Object,
+|};
+
+export type ReactEventResponder<T, E, C> = {
+  displayName: string,
+  targetEventTypes?: Array<T>,
+  rootEventTypes?: Array<T>,
+  createInitialState?: (props: Object) => Object,
+  allowMultipleHostChildren: boolean,
+  allowEventHooks: boolean,
+  onEvent?: (event: E, context: C, props: Object, state: Object) => void,
+  onEventCapture?: (event: E, context: C, props: Object, state: Object) => void,
+  onRootEvent?: (event: E, context: C, props: Object, state: Object) => void,
+  onMount?: (context: C, props: Object, state: Object) => void,
+  onUnmount?: (context: C, props: Object, state: Object) => void,
+  onOwnershipChange?: (context: C, props: Object, state: Object) => void,
+};
+
+export type ReactEventComponent<T, E, C> = {|
+  $$typeof: Symbol | number,
+  responder: ReactEventResponder<T, E, C>,
+|};
+
+export type ReactEventTarget = {|
+  $$typeof: Symbol | number,
+  displayName?: string,
+  type: Symbol | number,
+|};
+
+export opaque type EventPriority = 0 | 1 | 2;
+
+export const DiscreteEvent: EventPriority = 0;
+export const UserBlockingEvent: EventPriority = 1;
+export const ContinuousEvent: EventPriority = 2;
